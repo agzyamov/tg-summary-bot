@@ -1,0 +1,19 @@
+# Sensitive config and credentials
+.env
+*.session*
+safe_session*
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.log
+*.db
+*.sqlite
+
+# VS Code settings
+.vscode/
+
+# Virtual environments
+.venv/
+env/

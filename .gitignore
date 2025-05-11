@@ -17,3 +17,6 @@ __pycache__/
 # Virtual environments
 .venv/
 env/
+
+# Output files
+summary_safe.md

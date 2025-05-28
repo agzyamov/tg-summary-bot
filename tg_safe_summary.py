@@ -9,35 +9,45 @@ from openai import OpenAI
 # Load environment variables
 load_dotenv()
 
-
-print("LOADED KEY:", os.getenv("OPENROUTER_API_KEY"))
-
-# Telegram API credentials
+# Telegram credentials
 api_id = int(os.getenv("TELEGRAM_API_ID"))
 api_hash = os.getenv("TELEGRAM_API_HASH")
 channels = os.getenv("CHANNELS", "").split(",")
+chat_id = os.getenv("CHAT_ID")
 
-# OpenRouter API key
+# OpenRouter credentials
 openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-
-# Correct OpenAI client for OpenRouter
 openai_client = OpenAI(
     api_key=openrouter_api_key,
     base_url="https://openrouter.ai/api/v1",
-    default_headers={
-        "Authorization": f"Bearer {openrouter_api_key}"
-    }
+    default_headers={"Authorization": f"Bearer {openrouter_api_key}"}
 )
 
-# Telegram session
 client = TelegramClient("safe_session", api_id, api_hash)
 
-# GPT-based summarization
-async def summarize(channel_name, text):
-    prompt = f"Summarize key insights from the last 24 hours in the Telegram channel {channel_name}:\n\n{text}"
+async def summarize(title, text):
+    # prompt = f"Summarize key insights from the last 24 hours in the Telegram chat or channel in Russian language'{title}':\n\n{text}"
+    prompt = f"""
+    Проанализируй сообщения из Telegram-чата за последние 24 часа и сделай краткое саммари на русском языке.
+
+    Твоя задача — помочь занятому человеку быстро понять, стоит ли возвращаться к обсуждению. Изложи в сжатой форме, какие были:
+    - ключевые темы и обсуждения,
+    - интересные идеи, инсайты, споры,
+    - важные вопросы или новости.
+
+    Каждую тему оцени по **весу** (насколько она была активной, важной, обсуждаемой) — по шкале от 1 до 5, где:
+    - 1 — упомянули вскользь,
+    - 3 — средняя активность или интерес,
+    - 5 — очень бурное обсуждение или критически важная информация.
+
+    Если обсуждения были поверхностные или пустые — скажи об этом. Не пересказывай все сообщения, выдели только суть. Структурируй ответ **по пунктам с весами** для удобства восприятия.
+
+    Вот сообщения:\n\n{text}
+    """
+
     try:
         response = openai_client.chat.completions.create(
-            model="openai/gpt-3.5-turbo",  # You can switch to "deepseek-ai/deepseek-moe"
+            model="openai/gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=600,
             temperature=0.4
@@ -46,7 +56,6 @@ async def summarize(channel_name, text):
     except Exception as e:
         return f"Error generating summary: {e}"
 
-# Safe message fetching from Telegram
 async def fetch_messages_safe(entity):
     try:
         yesterday = datetime.now(timezone.utc) - timedelta(days=1)
@@ -60,39 +69,55 @@ async def fetch_messages_safe(entity):
         print(f"Error fetching messages: {e}")
         return ""
 
-# Main loop
 async def main():
     await client.start()
     print("✅ Telegram authorization successful.")
 
     summaries = []
-    max_channels = min(5, len(channels))
 
-    for ch in channels[:max_channels]:
+    # Каналы
+    for ch in channels[:min(5, len(channels))]:
         ch = ch.strip()
         if not ch:
             continue
 
-        print(f"\n📥 Processing: {ch}")
+        print(f"\n📥 Processing channel: {ch}")
         try:
             entity = await client.get_entity(ch)
             text = await fetch_messages_safe(entity)
 
             if not text.strip():
                 summaries.append(f"## {ch}\n\nNo recent messages in the last 24 hours.\n\n")
-                continue
+            else:
+                summary = await summarize(ch, text)
+                summaries.append(f"## {ch}\n\n{summary}\n\n")
 
-            summary = await summarize(ch, text)
-            summaries.append(f"## {ch}\n\n{summary}\n\n")
-
-            await asyncio.sleep(3)  # Avoid rate limits
+            await asyncio.sleep(3)
         except Exception as e:
             summaries.append(f"## {ch}\n\nError: {e}\n\n")
 
+    # Чат по ID
+    if chat_id:
+        print(f"\n💬 Processing chat ID: {chat_id}")
+        try:
+            entity = await client.get_entity(int(chat_id))
+            text = await fetch_messages_safe(entity)
+
+            if not text.strip():
+                summaries.append(f"## Chat {chat_id}\n\nNo recent messages in the last 24 hours.\n\n")
+            else:
+                summary = await summarize(f"Chat {chat_id}", text)
+                summaries.append(f"## Chat {chat_id}\n\n{summary}\n\n")
+
+            await asyncio.sleep(3)
+        except Exception as e:
+            summaries.append(f"## Chat {chat_id}\n\nError: {e}\n\n")
+
+    # Сохраняем результат
     with open("summary_safe.md", "w", encoding="utf-8") as f:
         f.writelines(summaries)
 
     print("\n✅ Done! Summary saved to summary_safe.md")
 
-# Run the script
+# Run
 asyncio.run(main())

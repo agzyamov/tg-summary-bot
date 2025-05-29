@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError
 from openai import OpenAI
+import time
 
 # Load environment variables
 load_dotenv()
@@ -23,10 +24,18 @@ openai_client = OpenAI(
     default_headers={"Authorization": f"Bearer {openrouter_api_key}"}
 )
 
+# Top 5 LLM models to use with fallbacks
+TOP_MODELS = [
+    "openai/gpt-4o",
+    "anthropic/claude-3-sonnet",  # More affordable than opus
+    "google/gemini-pro",         # Correct model ID for Gemini
+    "mistralai/mistral-large",
+    "openai/gpt-3.5-turbo"       # Fallback option
+]
+
 client = TelegramClient("safe_session", api_id, api_hash)
 
-async def summarize(title, text):
-    # prompt = f"Summarize key insights from the last 24 hours in the Telegram chat or channel in Russian language'{title}':\n\n{text}"
+async def summarize_with_model(text, model_name):
     prompt = f"""
     Проанализируй сообщения из Telegram-чата за последние 24 часа и сделай краткое саммари на русском языке.
 
@@ -46,15 +55,39 @@ async def summarize(title, text):
     """
 
     try:
+        start_time = time.time()
         response = openai_client.chat.completions.create(
-            model="openai/gpt-3.5-turbo",
+            model=model_name,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=600,
             temperature=0.4
         )
-        return response.choices[0].message.content.strip()
+        elapsed_time = time.time() - start_time
+        summary = response.choices[0].message.content.strip()
+        return summary, elapsed_time
     except Exception as e:
-        return f"Error generating summary: {e}"
+        return f"Error generating summary with {model_name}: {e}", 0
+
+async def summarize(title, text):
+    results = []
+    
+    for model in TOP_MODELS:
+        print(f"📊 Generating summary with {model}...")
+        summary, elapsed_time = await summarize_with_model(text, model)
+        results.append({
+            "model": model,
+            "summary": summary,
+            "time": elapsed_time
+        })
+    
+    # Format the results
+    formatted_results = f"# Summaries for {title}\n\n"
+    
+    for result in results:
+        model_name = result["model"].split("/")[-1]
+        formatted_results += f"## {model_name} (completed in {result['time']:.2f}s)\n\n{result['summary']}\n\n---\n\n"
+    
+    return formatted_results
 
 async def fetch_messages_safe(entity):
     try:
